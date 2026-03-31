@@ -17,6 +17,11 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import kotlin.concurrent.thread
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
+import android.os.Handler
+import android.os.Looper
 
 class CallAudioService : AccessibilityService() {
 
@@ -66,7 +71,7 @@ class CallAudioService : AccessibilityService() {
                         transducer = OnlineTransducerModelConfig(
                             encoder = "$modelDir/encoder-epoch-99-avg-1.int8.onnx",
                             decoder = "$modelDir/decoder-epoch-99-avg-1.onnx",
-                            joiner  = "$modelDir/joiner-epoch-99-avg-1.int8.onnx",
+                            joiner = "$modelDir/joiner-epoch-99-avg-1.int8.onnx",
                         ),
                         tokens = "$modelDir/tokens.txt",
                         modelType = "zipformer",
@@ -212,24 +217,47 @@ class CallAudioService : AccessibilityService() {
 
     private fun checkKeywords(text: String) {
         val detected = phishingKeywords.filter { text.contains(it) }
-
-        // ✅ 오버레이 있으면 STT 텍스트 업데이트
         DetectionService.overlayView?.updateSttText(text)
 
         if (detected.isNotEmpty()) {
             Log.w(TAG, "🚨 보이스피싱 키워드 탐지: $detected")
-
-            // ✅ 오버레이 없으면 처음 생성 (방식 B - 키워드 감지 시 팝업)
             if (DetectionService.overlayView == null || !DetectionService.overlayView!!.isShowing) {
                 DetectionService.overlayView = OverlayView(this)
                 DetectionService.overlayView?.show()
             }
-
-            // ✅ 감지 개수에 따라 단계 결정
             val stage = if (detected.size >= 3) OverlayView.Stage.DANGER
             else OverlayView.Stage.WARNING
             DetectionService.overlayView?.setStage(stage)
             DetectionService.overlayView?.updateSttText(text)
+
+            // ✅ 추가
+            sendTextToServer(text)
+        }
+    }
+
+    // ✅ 새 함수 추가
+    private fun sendTextToServer(text: String) {
+        thread {
+            try {
+                val json = JSONObject().put("text", text).toString().toByteArray()
+                val conn = URL(SERVER_URL).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.connectTimeout = 5000
+                conn.readTimeout = 30000
+                conn.doOutput = true
+                conn.outputStream.write(json)
+
+                val response = conn.inputStream.bufferedReader().readText()
+                val result = JSONObject(response).getString("result")
+                Log.i(TAG, "🤖 Qwen 결과: $result")
+
+                Handler(Looper.getMainLooper()).post {
+                    DetectionService.overlayView?.updateScriptText(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ 서버 전송 실패: ${e.message}")
+            }
         }
     }
 
@@ -250,5 +278,6 @@ class CallAudioService : AccessibilityService() {
     companion object {
         var instance: CallAudioService? = null
             private set
+        const val SERVER_URL = "https://exemptible-solidary-bryce.ngrok-free.dev/analyze-text"
     }
 }

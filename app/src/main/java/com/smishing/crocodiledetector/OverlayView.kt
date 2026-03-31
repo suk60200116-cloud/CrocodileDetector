@@ -64,6 +64,10 @@ class OverlayView(private val context: Context) {
         mainHandler.post { sttTextView?.text = text }
     }
 
+    fun updateScriptText(text: String) {
+        mainHandler.post { scriptTextView?.text = text }
+    }
+
     fun setStage(stage: Stage) {
         mainHandler.post { applyStage(stage) }
     }
